@@ -18,7 +18,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.yalantis.ucrop.UCrop
-
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import android.os.Build
 
 class CameraModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext), ActivityEventListener {
@@ -26,6 +30,12 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
     private var photoUri: Uri? = null
     private var cropDestinationUri: Uri? = null
 
+    companion object {
+        private const val REQUEST_CAMERA_CAPTURE = 101
+        private const val REQUEST_GALLERY_PICK = 102
+        private const val REQUEST_CAMERA_PERMISSION = 201
+        private const val REQUEST_GALLERY_PERMISSION = 202
+    }
 
     init {
         reactContext.addActivityEventListener(this)
@@ -71,7 +81,7 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
             val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
             intent.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photoUri)
 
-            activity.startActivityForResult(intent, 101)
+            activity.startActivityForResult(intent, REQUEST_CAMERA_CAPTURE)
 
 
         } catch (e: Exception) {
@@ -82,18 +92,69 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun pickImage(promise: Promise) {
-        val activity = reactContext.currentActivity
-        if (activity == null) {
-            promise.reject("NO_ACTIVITY", "Activity doesn't exist")
+        photoPromise = promise
+        checkGalleryPermission {
+            launchGallery()
+        }
+    }
+
+    fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        when (requestCode) {
+            REQUEST_GALLERY_PERMISSION -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    launchGallery() // now launch gallery after user grants permission
+                } else {
+                    photoPromise?.reject("PERMISSION_DENIED", "Gallery permission denied")
+                    photoPromise = null
+                }
+            }
+        }
+    }
+
+
+    private fun checkGalleryPermission(onGranted: () -> Unit) {
+        val activity = reactContext.currentActivity ?: run {
+            photoPromise?.reject("NO_ACTIVITY", "Current activity is null")
             return
         }
 
-        photoPromise = promise
+        val permission = if (Build.VERSION.SDK_INT >= 33) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+        if (ContextCompat.checkSelfPermission(
+                reactContext,
+                permission
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            launchGallery() // only if already granted
+        } else {
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(permission),
+                REQUEST_GALLERY_PERMISSION
+            )
+        }
+    }
+
+    @ReactMethod
+    fun launchGallery() {
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            photoPromise?.reject("NO_ACTIVITY", "Activity doesn't exist")
+            return
+        }
 
         try {
             val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             intent.type = "image/*"
-            activity.startActivityForResult(intent, 102)
+            activity.startActivityForResult(intent, REQUEST_GALLERY_PICK)
         } catch (e: Exception) {
             photoPromise?.reject("ERROR", e.message)
             photoPromise = null
@@ -101,19 +162,38 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun startUCrop(sourceUri: Uri) {
-        val destinationFile = File.createTempFile(
-            "CROP_${System.currentTimeMillis()}_",
-            ".jpg",
-            reactContext.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-        )
-        cropDestinationUri = Uri.fromFile(destinationFile)
+        try {
+            val activity = reactContext.currentActivity ?: run {
+                photoPromise?.reject("NO_ACTIVITY", "Current activity is null")
+                photoPromise = null
+                return
+            }
 
-        UCrop.of(sourceUri, cropDestinationUri!!)
-            .withAspectRatio(1f, 1f)
-            .withMaxResultSize(800, 800)
-            .start(reactContext.currentActivity!!)
+            val destinationFile = File.createTempFile(
+                "CROP_${System.currentTimeMillis()}_",
+                ".jpg",
+                reactContext.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            )
+            cropDestinationUri = Uri.fromFile(destinationFile)
 
+            val intent = UCrop.of(sourceUri, cropDestinationUri!!)
+                .withAspectRatio(1f, 1f)
+                .withMaxResultSize(800, 800)
+                .getIntent(activity)
+
+            // Grant temporary read/write permission
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+
+            activity.startActivityForResult(intent, UCrop.REQUEST_CROP)
+
+        } catch (e: Exception) {
+            photoPromise?.reject("UCROP_INIT_ERROR", e.message)
+            photoPromise = null
+        }
     }
+
 
     override fun onActivityResult(
         activity: Activity,
@@ -122,22 +202,29 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
         data: Intent?
     ) {
         when (requestCode) {
-            101 -> { // Camera capture
-                if (resultCode == Activity.RESULT_OK) {
-                    photoUri?.let { startUCrop(it) } // immediately launch uCrop
+
+            REQUEST_CAMERA_CAPTURE -> { // Camera capture
+                if (resultCode == Activity.RESULT_OK && photoUri != null) {
+                    startUCrop(photoUri!!) // Launch UCrop for camera photo
                 } else {
                     photoPromise?.reject("CANCELLED", "User cancelled camera capture")
                     photoPromise = null
                 }
             }
 
-            UCrop.REQUEST_CROP -> { // After crop
-                if (resultCode == Activity.RESULT_OK) {
-                    cropDestinationUri?.let {
-                        photoPromise?.resolve(it.toString()) // Return cropped URI
-                    } ?: run {
-                        photoPromise?.reject("CROP_FAILED", "No output from crop")
-                    }
+            REQUEST_GALLERY_PICK -> { // Gallery picker
+                val selectedImageUri = data?.data
+                if (resultCode == Activity.RESULT_OK && selectedImageUri != null) {
+                    startUCrop(selectedImageUri) // Launch UCrop for gallery image
+                } else {
+                    photoPromise?.reject("CANCELLED", "User cancelled image pick")
+                    photoPromise = null
+                }
+            }
+
+            UCrop.REQUEST_CROP -> { // After cropping
+                if (resultCode == Activity.RESULT_OK && cropDestinationUri != null) {
+                    photoPromise?.resolve(cropDestinationUri.toString()) // Return cropped URI
                 } else if (resultCode == UCrop.RESULT_ERROR) {
                     val cropError = data?.let { UCrop.getError(it) }
                     photoPromise?.reject("UCROP_ERROR", cropError?.message)
@@ -147,17 +234,7 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
                 photoPromise = null
             }
 
-            102 -> { // Gallery picker
-                if (resultCode == Activity.RESULT_OK && data != null) {
-                    val selectedImage: Uri? = data.data
-                    photoPromise?.resolve(selectedImage.toString())
-                } else {
-                    photoPromise?.reject("CANCELLED", "User cancelled image pick")
-                }
-                photoPromise = null
-            }
-
-            else -> {
+            else -> { // Unknown request code
                 photoPromise?.reject("UNKNOWN_REQUEST", "Unknown request code: $requestCode")
                 photoPromise = null
             }

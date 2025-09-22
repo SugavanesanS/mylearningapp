@@ -1,4 +1,4 @@
-import { StyleSheet, Text, Touchable, TouchableOpacity, View, NativeModules, Image, Alert } from 'react-native'
+import { StyleSheet, Text, Touchable, TouchableOpacity, View, NativeModules, Image, Alert, Platform, PermissionsAndroid } from 'react-native'
 import React from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 

@@ -70,6 +70,11 @@ def enableProguardInReleaseBuilds = true
  * give correct results when using with locales other than en-US. Note that
  * this variant is about 6MiB larger per architecture than default.
  */
+
+project.ext.react = [
+        enableHermes: true,
+]
+
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
@@ -101,7 +106,6 @@ android {
             }
         }
     }
-
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -120,8 +124,8 @@ android {
         abi {
             enable true
             reset()
-            include "armeabi-v7a", "arm64-v8a"
-            universalApk false
+            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            universalApk true
         }
     }
 }
