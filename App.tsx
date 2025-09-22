@@ -11,7 +11,7 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import Homescreen from './src/components/screens/Homescreen';
+import Gallaryscreen from './src/components/screens/Gallaryscreen';
 
 function App() {
   
@@ -20,7 +20,7 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <Homescreen />
+      <Gallaryscreen />
     </SafeAreaProvider>
   );
 }
