@@ -8,3 +8,20 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+
+# React Native
+-keep class com.facebook.react.** { *; }
+-dontwarn com.facebook.react.**
+
+# Hermes JS engine (if enabled)
+-keep class com.facebook.hermes.** { *; }
+-dontwarn com.facebook.hermes.**
+
+# Keep React Native bridge
+-keepclassmembers class * {
+    @com.facebook.react.bridge.ReactMethod <methods>;
+}
+
+# UCrop (keep its activities + classes)
+-keep class com.yalantis.ucrop.** { *; }
+-dontwarn com.yalantis.ucrop.**
