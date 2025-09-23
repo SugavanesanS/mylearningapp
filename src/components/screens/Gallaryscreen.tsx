@@ -1,19 +1,21 @@
-import { StyleSheet, Text, Touchable, TouchableOpacity, View, NativeModules, Image, Alert, Platform, PermissionsAndroid } from 'react-native'
+import { StyleSheet, Text, TouchableOpacity, View, Image, Alert, Platform, NativeModules } from 'react-native'
 import React from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const { CameraModule } = NativeModules;
 
 const Gallaryscreen = () => {
 
     const insets = useSafeAreaInsets();
-    const { CameraModule } = NativeModules;
 
     const [image, setImage] = React.useState<string | null>(null);
 
     const AndroidCapturingImage = async () => {
         try {
-            const uri = await CameraModule.captureImage();
-            setImage(uri);
-            console.log('Captured image URI:', uri);
+            const data = await CameraModule.captureImage({
+                'crop': false
+            })
+            setImage(data?.uri);
         } catch (e) {
             console.error('Error capturing photo:', e);
         }
@@ -21,9 +23,10 @@ const Gallaryscreen = () => {
 
     const AndroidChooseImageFromGallary = async () => {
         try {
-            const uri = await CameraModule.pickImage();
-            setImage(uri);
-            console.log('Captured image URI:', uri);
+            const data = await CameraModule.pickImage({
+                'crop': true
+            });
+            setImage(data?.uri);
         } catch (e) {
             console.error('Error capturing photo:', e);
         }
@@ -50,7 +53,6 @@ const Gallaryscreen = () => {
             [
                 {
                     text: "Cancel",
-
                 },
                 {
                     text: "Choose from Gallery",

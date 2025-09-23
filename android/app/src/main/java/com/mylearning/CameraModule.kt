@@ -23,12 +23,16 @@ import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import android.os.Build
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.bridge.ReadableMap
 
 class CameraModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext), ActivityEventListener {
     private var photoPromise: Promise? = null
     private var photoUri: Uri? = null
     private var cropDestinationUri: Uri? = null
+    private var pendingCrop: Boolean = false
 
     companion object {
         private const val REQUEST_CAMERA_CAPTURE = 101
@@ -46,13 +50,15 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun captureImage(promise: Promise) {
+    fun captureImage(options: ReadableMap?, promise: Promise) {
         val activity = reactContext.currentActivity
         if (activity == null) {
             promise.reject("No Activity", "Activity doesn't exist")
             return
         }
         photoPromise = promise
+        val shouldCrop = options?.getBoolean("crop") ?: false
+        pendingCrop = shouldCrop
 
         try {
 
@@ -91,8 +97,10 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun pickImage(promise: Promise) {
+    fun pickImage(options: ReadableMap?, promise: Promise) {
         photoPromise = promise
+        val shouldCrop = options?.getBoolean("crop") ?: false
+        pendingCrop = shouldCrop
         checkGalleryPermission {
             launchGallery()
         }
@@ -194,6 +202,12 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun resolveImageResult(uri: Uri, mimeType: String?, promise: Promise) {
+        val result: WritableMap = Arguments.createMap()
+        result.putString("uri", uri.toString())
+        result.putString("type", mimeType ?: "image/jpeg")
+        promise.resolve(result)
+    }
 
     override fun onActivityResult(
         activity: Activity,
@@ -205,7 +219,13 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
 
             REQUEST_CAMERA_CAPTURE -> { // Camera capture
                 if (resultCode == Activity.RESULT_OK && photoUri != null) {
-                    startUCrop(photoUri!!) // Launch UCrop for camera photo
+                    if (pendingCrop && photoUri != null) {
+                        startUCrop(photoUri!!)
+                    } else {
+                        val mimeType = reactContext.contentResolver.getType(photoUri!!) ?: "image/jpeg"
+                        resolveImageResult(photoUri!!, mimeType, photoPromise!!)
+                        photoPromise = null
+                    }
                 } else {
                     photoPromise?.reject("CANCELLED", "User cancelled camera capture")
                     photoPromise = null
@@ -215,7 +235,14 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
             REQUEST_GALLERY_PICK -> { // Gallery picker
                 val selectedImageUri = data?.data
                 if (resultCode == Activity.RESULT_OK && selectedImageUri != null) {
-                    startUCrop(selectedImageUri) // Launch UCrop for gallery image
+                    val selectedUri = data.data!!
+                    if (pendingCrop) {
+                        startUCrop(selectedImageUri)
+                    } else {
+                        val mimeType =  reactContext.contentResolver.getType(selectedImageUri) ?: "image/jpeg"
+                        resolveImageResult(selectedImageUri, mimeType, photoPromise!!)
+                        photoPromise = null
+                    }
                 } else {
                     photoPromise?.reject("CANCELLED", "User cancelled image pick")
                     photoPromise = null
@@ -224,7 +251,9 @@ class CameraModule(private val reactContext: ReactApplicationContext) :
 
             UCrop.REQUEST_CROP -> { // After cropping
                 if (resultCode == Activity.RESULT_OK && cropDestinationUri != null) {
-                    photoPromise?.resolve(cropDestinationUri.toString()) // Return cropped URI
+                    val mimeType = reactContext.contentResolver.getType(cropDestinationUri!!)
+                        ?: "image/jpeg"
+                    resolveImageResult(cropDestinationUri!!, mimeType, photoPromise!!)
                 } else if (resultCode == UCrop.RESULT_ERROR) {
                     val cropError = data?.let { UCrop.getError(it) }
                     photoPromise?.reject("UCROP_ERROR", cropError?.message)
